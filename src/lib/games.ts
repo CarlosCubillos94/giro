@@ -1,3 +1,5 @@
+import type { FovBasis } from "./fov.ts";
+
 export const GAMES = [
   {
     id: "valorant",
@@ -8,6 +10,7 @@ export const GAMES = [
     family: "Tac FPS",
     band: [35, 75],
     defaultFov: 103,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "cs2",
@@ -18,6 +21,7 @@ export const GAMES = [
     family: "Tac FPS",
     band: [35, 75],
     defaultFov: 90,
+    fovBasis: "4:3" as FovBasis,
   },
   {
     id: "r6",
@@ -27,7 +31,8 @@ export const GAMES = [
     unit: "",
     family: "Tac FPS",
     band: [30, 60],
-    defaultFov: 84,
+    defaultFov: 90,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "deadlock",
@@ -37,7 +42,8 @@ export const GAMES = [
     unit: "",
     family: "Tac FPS",
     band: [30, 60],
-    defaultFov: 95,
+    defaultFov: 90,
+    fovBasis: "4:3" as FovBasis,
   },
   {
     id: "tarkov",
@@ -48,6 +54,7 @@ export const GAMES = [
     family: "Tac FPS",
     band: [30, 65],
     defaultFov: 75,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "fortnite",
@@ -58,6 +65,7 @@ export const GAMES = [
     family: "Construcción",
     band: [25, 50],
     defaultFov: 80,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "apex",
@@ -67,7 +75,8 @@ export const GAMES = [
     unit: "",
     family: "Tracking",
     band: [20, 60],
-    defaultFov: 110,
+    defaultFov: 90,
+    fovBasis: "4:3" as FovBasis,
   },
   {
     id: "ow2",
@@ -78,6 +87,7 @@ export const GAMES = [
     family: "Tracking",
     band: [20, 60],
     defaultFov: 103,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "cod",
@@ -87,7 +97,8 @@ export const GAMES = [
     unit: "",
     family: "Tracking",
     band: [20, 50],
-    defaultFov: 90,
+    defaultFov: 80,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "finals",
@@ -98,6 +109,7 @@ export const GAMES = [
     family: "Tracking",
     band: [20, 50],
     defaultFov: 90,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "marvel",
@@ -108,6 +120,7 @@ export const GAMES = [
     family: "Tracking",
     band: [20, 60],
     defaultFov: 103,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "destiny2",
@@ -118,6 +131,7 @@ export const GAMES = [
     family: "Tracking",
     band: [20, 55],
     defaultFov: 105,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "halo",
@@ -128,6 +142,7 @@ export const GAMES = [
     family: "Tracking",
     band: [20, 55],
     defaultFov: 78,
+    fovBasis: "16:9" as FovBasis,
   },
   {
     id: "rust",
@@ -138,6 +153,7 @@ export const GAMES = [
     family: "Varios",
     band: [25, 55],
     defaultFov: 90,
+    fovBasis: "4:3" as FovBasis,
   },
   {
     id: "kovaaks",
@@ -147,7 +163,8 @@ export const GAMES = [
     unit: "",
     family: "Entrenador",
     band: [25, 60],
-    defaultFov: 103,
+    defaultFov: 90,
+    fovBasis: "4:3" as FovBasis,
   },
   {
     id: "aimlabs",
@@ -158,6 +175,7 @@ export const GAMES = [
     family: "Entrenador",
     band: [25, 60],
     defaultFov: 103,
+    fovBasis: "16:9" as FovBasis,
   },
 ] as const;
 

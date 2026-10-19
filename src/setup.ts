@@ -59,7 +59,7 @@ function sanitize(raw: Partial<Setup>): Setup {
     padCm: clamp(raw.padCm, 15, 140, DEFAULT_SETUP.padCm),
     gameId: game.id,
     sens: clamp(raw.sens, 0.001, 500, DEFAULT_SETUP.sens),
-    fov: clamp(raw.fov, 60, 120, game.defaultFov),
+    fov: game.defaultFov,
     playstyle,
     polling: POLLING.has(raw.polling ?? 0) ? (raw.polling as number) : DEFAULT_SETUP.polling,
     pointer611: raw.pointer611 === true,

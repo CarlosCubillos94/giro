@@ -38,11 +38,20 @@ assert.equal(taskForRound(3), "track");
 const start = nextProbeCm({
   roundIndex: 0,
   totalRounds: 15,
-  currentCm: 40.82,
+  currentCm: 40.82142857,
   window: valorantBand,
   samples: [],
 });
-assert.ok(Math.abs(start - 40.82) < 0.02, `first probe ${start}`);
+assert.equal(start, 40.82142857);
+
+const firstOutside = nextProbeCm({
+  roundIndex: 0,
+  totalRounds: 15,
+  currentCm: 20,
+  window: valorantBand,
+  samples: [],
+});
+assert.equal(firstOutside, 20, "baseline stays at the player's cm/360");
 
 const faster = nextProbeCm({
   roundIndex: 1,

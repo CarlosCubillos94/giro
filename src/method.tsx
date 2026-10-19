@@ -135,9 +135,10 @@ export function Method({ setup, health }: { setup: Setup; health: Health | null 
       <section>
         <h2>FOV y ADS</h2>
         <p>
-          El mismo cm/360 puede sentirse distinto si el campo de visión cambia. Valorant fija el
-          horizontal en 103°. Counter-Strike y Apex lo dejan mover, y un FOV más abierto hace que el
-          mismo swipe recorra menos píxeles. No se “corrige” el hipfire para eso.
+          El FOV es cuántos grados ve la cámara. El mismo cm/360 se siente más rápido si el FOV es más
+          estrecho, porque el swipe cubre más pantalla. Giro no te pide el FOV: usa el valor típico de
+          cada juego y pone esa cámara. Valorant queda en 103° horizontal (16:9). Counter-Strike 2 y
+          Apex, 90° en 4:3, unos 106.3° en 16:9. Overwatch 2, 103°. Fortnite, 80°. Call of Duty, 80°.
         </p>
         <p>
           La mira, el visor y el coeficiente de monitor son otro ajuste. Este banco no los convierte.
@@ -148,13 +149,14 @@ export function Method({ setup, health }: { setup: Setup; health: Health | null 
       </section>
 
       <section>
-        <h2>Windows</h2>
+        <h2>Windows y el mouse en el navegador</h2>
         <p>
-          El cm/360 del juego asume raw input, el puntero en el sexto paso de once, y “mejorar la
-          precisión del puntero” apagado. Si la aceleración está activa, la distancia deja de ser
-          lineal y ninguna conversión se sostiene.           El rango 3D usa el mismo supuesto, y corrige la
-          escala de pantalla con devicePixelRatio. A 100% de escala y 6/11, una cuenta del mouse es
-          el delta que entra en el rango.
+          El cm/360 del juego asume raw input. Giro pide al navegador el movimiento sin ajustar
+          (unadjustedMovement), el equivalente de raw input en Chrome: cada cuenta del mouse gira
+          sensibilidad × yaw grados, sin multiplicar por la escala de pantalla. Si el navegador
+          rechaza esa opción, se usa movementX en píxeles CSS y se corrige con devicePixelRatio.
+          En Windows, puntero 6/11 y “mejorar la precisión del puntero” apagado. Si la aceleración
+          está activa, la distancia deja de ser lineal.
         </p>
       </section>
     </article>

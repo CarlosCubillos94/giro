@@ -104,11 +104,13 @@ export function nextProbeCm(opts: {
   const { roundIndex, totalRounds, currentCm, window, samples } = opts;
   const lo = window[0];
   const hi = window[1];
-  const start = clamp(Number.isFinite(currentCm) && currentCm > 0 ? currentCm : (lo + hi) / 2, lo, hi);
+  const start = Number.isFinite(currentCm) && currentCm > 0 ? currentCm : (lo + hi) / 2;
 
-  const early = [start, start * 0.42, start * 2.3, start * 0.68, start * 1.55];
-  if (roundIndex < early.length) {
-    return uniqueCm(clamp(early[roundIndex] ?? start, lo, hi), samples, lo, hi);
+  if (roundIndex === 0) return start;
+
+  const early = [start * 0.42, start * 2.3, start * 0.68, start * 1.55];
+  if (roundIndex <= early.length) {
+    return uniqueCm(clamp(early[roundIndex - 1] ?? start, lo, hi), samples, lo, hi);
   }
 
   const best = bestScore(samples) ?? { cm: start, score: 0, bias: 0 };

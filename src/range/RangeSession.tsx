@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { classifyShot, median, type Shot } from "../lib/finder.ts";
+import { fovNote } from "../lib/fov.ts";
 import { formatPct01, formatSens } from "../lib/format.ts";
 import { GAMES } from "../lib/games.ts";
 import { cmPer360, sensFromCm } from "../lib/sensitivity.ts";
@@ -64,7 +65,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const endingRef = useRef(false);
   const lockAttempt = useRef(0);
   const dpiRef = useRef(setup.dpi);
-  const fovRef = useRef(setup.fov);
+  const fovRef = useRef({ h: game.defaultFov, basis: game.fovBasis });
   const cmRef = useRef(40);
   const roundRef = useRef(0);
   const samplesRef = useRef<ProbeScore[]>([]);
@@ -74,9 +75,9 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
 
   useEffect(() => {
     dpiRef.current = setup.dpi;
-    fovRef.current = setup.fov;
     currentCmRef.current = currentCm;
-  }, [currentCm, setup.dpi, setup.fov]);
+    fovRef.current = { h: game.defaultFov, basis: game.fovBasis };
+  }, [currentCm, game.defaultFov, game.fovBasis, setup.dpi]);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -85,6 +86,10 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   useEffect(() => {
     timingRef.current = timing;
   }, [timing]);
+
+  useEffect(() => {
+    engineRef.current?.setGameFov(game.defaultFov, game.fovBasis);
+  }, [game.defaultFov, game.fovBasis]);
 
   useEffect(() => {
     const mode = finderQuery(window.location.search);
@@ -157,7 +162,14 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     };
     void Promise.resolve()
       .then(() => requestLock({ unadjustedMovement: true }))
-      .catch(() => requestLock())
+      .then(() => {
+        engineRef.current?.setRawMovement(true);
+      })
+      .catch(() =>
+        Promise.resolve(requestLock()).then(() => {
+          engineRef.current?.setRawMovement(false);
+        }),
+      )
       .then(() => {
         window.setTimeout(fail, 400);
       })
@@ -199,7 +211,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     const timing = timingRef.current;
     const roundTask = taskForRound(roundRef.current);
     engine.setSensitivity(dpiRound, cmRound);
-    engine.setHfov(fovRef.current);
+    engine.setGameFov(fovRef.current.h, fovRef.current.basis);
     engine.resetView();
     let points = 0;
     let hits = 0;
@@ -544,16 +556,8 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
                 suffix={game.unit === "%" ? "%" : undefined}
                 onChange={(sens) => onChange({ ...setup, sens })}
               />
-              <NumberField
-                label="FOV"
-                value={setup.fov}
-                digits={0}
-                min={60}
-                max={120}
-                inputMode="numeric"
-                onChange={(fov) => onChange({ ...setup, fov })}
-              />
             </div>
+            <p className="hint">{fovNote(game.name, game.defaultFov, game.fovBasis)}</p>
             <p className="kicker playstyle-label">Cómo juegas</p>
             <div className="playstyle">
               {PLAYSTYLES.map((item) => (

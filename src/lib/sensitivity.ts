@@ -34,3 +34,29 @@ export function degreesPerCm(cm: number): number {
 export function countsToDegrees(counts: number, dpi: number, cm360: number): number {
   return ((counts / dpi) * 2.54 * 360) / cm360;
 }
+
+/** Degrees the game turns per mouse count: sens × yaw. Independent of DPI. */
+export function degreesPerCount(sens: number, yaw: number): number {
+  return sens * yaw;
+}
+
+/**
+ * Chrome `unadjustedMovement` reports hardware counts (same as in-game raw input).
+ * The CSS-pixel fallback only applies when that option is rejected: then movementX
+ * is in CSS pixels and devicePixelRatio recovers counts at 100% / 6/11.
+ */
+export function pointerCounts(movement: number, devicePixelRatio: number, rawMovement: boolean): number {
+  if (rawMovement) return movement;
+  return movement * (devicePixelRatio || 1);
+}
+
+export function rotationFromPointer(opts: {
+  movementX: number;
+  dpi: number;
+  cm360: number;
+  devicePixelRatio: number;
+  rawMovement: boolean;
+}): number {
+  const counts = pointerCounts(opts.movementX, opts.devicePixelRatio, opts.rawMovement);
+  return countsToDegrees(counts, opts.dpi, opts.cm360);
+}

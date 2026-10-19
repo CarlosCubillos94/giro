@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { fovNote } from "./lib/fov.ts";
 import { GAMES, type GameId } from "./lib/games.ts";
 import { formatEdpi, formatNum, formatSens, formatYaw } from "./lib/format.ts";
 import { sensAtDpi, type Health } from "./lib/health.ts";
@@ -261,15 +262,6 @@ export function SetupForm({ setup, onChange }: { setup: Setup; onChange: (setup:
         suffix={game.unit === "%" ? "%" : undefined}
         onChange={(sens) => patch({ sens })}
       />
-      <NumberField
-        label="FOV"
-        value={setup.fov}
-        digits={0}
-        min={60}
-        max={120}
-        inputMode="numeric"
-        onChange={(fov) => patch({ fov })}
-      />
       <SelectField
         label="Polling"
         value={String(setup.polling)}
@@ -281,6 +273,7 @@ export function SetupForm({ setup, onChange }: { setup: Setup; onChange: (setup:
           </option>
         ))}
       </SelectField>
+      <p className="hint">{fovNote(game.name, game.defaultFov, game.fovBasis)}</p>
       <p className="hint">Cambiar el DPI recalcula el cm/360 y deja quieto el número del juego.</p>
       <fieldset className="checks">
         <legend>Para que el número coincida con la mano</legend>

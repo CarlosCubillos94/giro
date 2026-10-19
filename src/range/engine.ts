@@ -27,7 +27,8 @@ import {
   WebGLRenderer,
   type Material,
 } from "three";
-import { countsToDegrees } from "../lib/sensitivity.ts";
+import { gameVerticalFov, type FovBasis } from "../lib/fov.ts";
+import { rotationFromPointer } from "../lib/sensitivity.ts";
 
 const DIST = 10;
 const EYE = 1.62;
@@ -60,6 +61,8 @@ export class RangeEngine {
   private dpi = 800;
   private cm = 40;
   private hfov = 103;
+  private fovBasis: FovBasis = "16:9";
+  private rawMovement = true;
   private kind: TargetKind = "speed";
   private raf = 0;
   private last = 0;
@@ -144,9 +147,14 @@ export class RangeEngine {
     this.cm = Math.max(cm, 1);
   }
 
-  setHfov(degrees: number) {
-    this.hfov = Math.min(120, Math.max(60, degrees));
+  setGameFov(hFovDeg: number, basis: FovBasis) {
+    this.hfov = hFovDeg;
+    this.fovBasis = basis;
     this.resize();
+  }
+
+  setRawMovement(raw: boolean) {
+    this.rawMovement = raw;
   }
 
   getView() {
@@ -235,9 +243,14 @@ export class RangeEngine {
 
   private onMove(event: MouseEvent) {
     if (document.pointerLockElement !== this.canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const degX = countsToDegrees(event.movementX * dpr, this.dpi, this.cm);
-    const degY = countsToDegrees(event.movementY * dpr, this.dpi, this.cm);
+    const pointer = {
+      dpi: this.dpi,
+      cm360: this.cm,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      rawMovement: this.rawMovement,
+    };
+    const degX = rotationFromPointer({ ...pointer, movementX: event.movementX });
+    const degY = rotationFromPointer({ ...pointer, movementX: event.movementY });
     this.yaw -= MathUtils.degToRad(degX);
     this.pitch -= MathUtils.degToRad(degY);
     const limit = Math.PI / 2 - 0.05;
@@ -282,14 +295,7 @@ export class RangeEngine {
     const height = parent?.clientHeight || window.innerHeight;
     if (width < 2 || height < 2) return;
     this.camera.aspect = width / height;
-    const vertical = 56;
-    const horizontal = MathUtils.radToDeg(
-      2 * Math.atan(Math.tan(MathUtils.degToRad(vertical) / 2) * this.camera.aspect),
-    );
-    this.camera.fov =
-      horizontal > this.hfov
-        ? MathUtils.radToDeg(2 * Math.atan(Math.tan(MathUtils.degToRad(this.hfov) / 2) / this.camera.aspect))
-        : vertical;
+    this.camera.fov = gameVerticalFov(this.hfov, this.fovBasis);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
   }
