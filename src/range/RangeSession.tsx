@@ -22,7 +22,7 @@ import {
   type RoundSample,
 } from "../lib/session.ts";
 import type { Setup } from "../setup.ts";
-import { NumberField, SelectField } from "../ui.tsx";
+import { CopyButton, NumberField, SelectField } from "../ui.tsx";
 import { RangeAudio } from "./audio.ts";
 import { RangeEngine } from "./engine.ts";
 
@@ -51,6 +51,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const [roundIndex, setRoundIndex] = useState(0);
   const [remain, setRemain] = useState(4);
   const [result, setResult] = useState<number | null>(null);
+  const [why, setWhy] = useState("");
   const [appliedSens, setAppliedSens] = useState<number | null>(null);
   const [task, setTask] = useState<ProbeTask>("track");
   const [timing, setTiming] = useState<FinderTiming>(() => finderTiming());
@@ -72,6 +73,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const windowRef = useRef<[number, number]>([35, 75]);
   const timingRef = useRef(timing);
   const currentCmRef = useRef(currentCm);
+  const startCmRef = useRef(40);
 
   useEffect(() => {
     dpiRef.current = setup.dpi;
@@ -96,6 +98,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     if (mode !== "results" && mode !== "applied") return;
     const cm = Math.round((currentCmRef.current ?? 36.85) * 100) / 100;
     setResult(cm);
+    setWhy("Te pasaste en el 62% de los flicks. Por eso sube el cm/360: más centímetros, más lenta.");
     setTiming(finderTiming(""));
     if (mode === "applied") {
       setAppliedSens(sensFromCm(cm, dpiRef.current, game.yaw));
@@ -230,6 +233,13 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     let trackLagSamples = 0;
     let lastSide = 0;
     let lastOn = false;
+    let lastAlong = 0;
+    let lastDir = 0;
+    let corrections = 0;
+    let errorSum = 0;
+    let absErrorSum = 0;
+    let correctionSum = 0;
+    let flickCount = 0;
     const begun = performance.now();
     const phase1 = 0.8 + Math.random() * Math.PI * 2;
     const phase2 = Math.random() * Math.PI * 2;
@@ -262,19 +272,30 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       };
       origin = engine.getView();
       maxPast = -999;
+      lastAlong = 0;
+      lastDir = 0;
+      corrections = 0;
       started = performance.now();
       accepting = true;
       place();
       paintHud();
     }
 
-    function trackPast() {
+    function trackPath() {
       const view = engine.getView();
       const vx = aim.yaw - origin.yaw;
       const vy = aim.pitch - origin.pitch;
       const len = Math.hypot(vx, vy) || 1;
       const along = ((view.yaw - origin.yaw) * vx + (view.pitch - origin.pitch) * vy) / len;
       maxPast = Math.max(maxPast, along - len);
+      const dAlong = along - lastAlong;
+      if (Math.abs(dAlong) > 0.08) {
+        const dir = Math.sign(dAlong);
+        if (lastDir !== 0 && dir !== lastDir) corrections += 1;
+        lastDir = dir;
+        lastAlong = along;
+      }
+      return { along, len, alongError: along - len };
     }
 
     function sampleTrack(now: number) {
@@ -328,6 +349,9 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
         trackCrosses: trackCrosses / Math.max(timing.roundMs / 1000, 1),
         trackLag: trackLagSamples === 0 ? 0 : trackLag / trackLagSamples,
         durationMs: timing.roundMs,
+        meanErrorDeg: flickCount === 0 ? 0 : errorSum / flickCount,
+        meanAbsErrorDeg: flickCount === 0 ? 0 : absErrorSum / flickCount,
+        correctionsPerShot: flickCount === 0 ? 0 : correctionSum / flickCount,
       };
       const scored = scoreSample(sample);
       samplesRef.current = [...samplesRef.current, scored];
@@ -335,8 +359,9 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       const canvas = canvasRef.current;
       if (canvas && document.pointerLockElement === canvas) document.exitPointerLock();
       if (nextIndex >= timing.rounds) {
-        const rec = recommendCm(samplesRef.current, windowRef.current);
-        setResult(rec);
+        const rec = recommendCm(samplesRef.current, windowRef.current, startCmRef.current);
+        setResult(rec.cm);
+        setWhy(rec.why);
         phaseRef.current = "results";
         setPhase("results");
         return;
@@ -348,7 +373,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       cmRef.current = nextProbeCm({
         roundIndex: nextIndex,
         totalRounds: timing.rounds,
-        currentCm: currentCmRef.current ?? cmRound,
+        currentCm: startCmRef.current,
         window: windowRef.current,
         samples: samplesRef.current,
       });
@@ -357,13 +382,18 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     }
 
     function onShot() {
-      trackPast();
+      const path = trackPath();
       const radius = roundTask === "precision" ? 0.9 : 1.45;
       const overshoot = roundTask === "precision" ? 0.5 : 1.1;
       const view = engine.getView();
       const dist = Math.hypot(aim.yaw - view.yaw, aim.pitch - view.pitch);
       const hit = engine.shootHit() || dist <= radius;
       const kind = classifyShot(hit, maxPast, overshoot, roundTask === "precision" ? 0.4 : 0.8);
+      const signed = maxPast > 0.2 ? maxPast : path.alongError;
+      errorSum += signed;
+      absErrorSum += Math.abs(signed);
+      correctionSum += corrections;
+      flickCount += 1;
       shots.push({ kind, hit, ms: performance.now() - started });
       if (hit) {
         hits += 1;
@@ -389,7 +419,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
         sampleTrack(now);
         return;
       }
-      if (accepting) trackPast();
+      if (accepting) trackPath();
     };
 
     engine.onShoot = () => {
@@ -420,10 +450,12 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     const startCm = currentCm ?? cmPer360(setup.dpi, setup.sens, game.yaw);
     const range = searchWindow(game.band, setup.playstyle, startCm);
     windowRef.current = range;
+    startCmRef.current = startCm;
     samplesRef.current = [];
     roundRef.current = 0;
     setRoundIndex(0);
     setResult(null);
+    setWhy("");
     setAppliedSens(null);
     setTask(taskForRound(0));
     cmRef.current = nextProbeCm({
@@ -442,6 +474,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     setPhase("intro");
     setNote("");
     setResult(null);
+    setWhy("");
     setAppliedSens(null);
   }
 
@@ -487,7 +520,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       </div>
       {phase === "live" ? <div className="aim-dot" /> : null}
 
-      {failed ? (
+      {failed && phase !== "results" && phase !== "applied" ? (
         <div className="range-veil">
           <div className="range-card">
             <h1>Este navegador no abrió el rango 3D.</h1>
@@ -503,8 +536,8 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
             <h1>Encuentra tu sensibilidad</h1>
             <p>La prueba dura unos 10 minutos.</p>
             <p>
-              Rondas cortas de seguimiento y flicks. Giro cambia la distancia entre rondas, mide si te
-              pasas o te quedas corto, y al final te da un cm/360.
+              Rondas cortas de seguimiento y flicks. Giro parte de tu cm/360 y lo mueve si te pasas o
+              te quedas corto de forma constante. La precisión pesa más que los aciertos rápidos.
             </p>
             <button
               type="button"
@@ -647,6 +680,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
               {result.toFixed(2)}
               <small>cm/360</small>
             </p>
+            {why ? <p className="why">{why}</p> : null}
             <div className="actions">
               <button type="button" className="btn" onClick={retry}>
                 Reintentar
@@ -655,7 +689,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
                 Descartar y salir
               </button>
               <button type="button" className="btn primary" onClick={applyResult}>
-                Aplicar
+                Ver mi sensibilidad para {game.name}
               </button>
             </div>
           </div>
@@ -665,19 +699,31 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       {phase === "applied" && result != null && appliedSens != null ? (
         <div className="range-veil">
           <div className="range-card range-card-mid">
-            <p className="eyebrow">Aplicado</p>
-            <h1>Sensibilidad en {game.name}</h1>
-            <p className="figure">
-              {formatSens(appliedSens, game.decimals, game.unit)}
-            </p>
+            <p className="eyebrow">Para el juego</p>
+            <h1>Sensibilidad para {game.name}</h1>
             <p>
-              {result.toFixed(2)} cm/360 a {setup.dpi} DPI. Ya está guardado en Números.
+              Giro no puede cambiar los ajustes de {game.name}. Copia este valor en la
+              configuración de sensibilidad del juego.
+            </p>
+            <p className="figure">{formatSens(appliedSens, game.decimals, game.unit)}</p>
+            <p className="sens-dpi">
+              A {setup.dpi} DPI. Pégalo en los ajustes de {game.name}.
+            </p>
+            <p className="hint">
+              {result.toFixed(2)} cm/360. El número también quedó en Números para pasarlo a
+              otros juegos.
             </p>
             <div className="actions">
+              <CopyButton
+                className="btn primary"
+                text={formatSens(appliedSens, game.decimals, game.unit)}
+              >
+                Copiar sensibilidad
+              </CopyButton>
               <button type="button" className="btn" onClick={retry}>
                 Reintentar
               </button>
-              <button type="button" className="btn primary" onClick={() => leave("numeros")}>
+              <button type="button" className="btn" onClick={() => leave("numeros")}>
                 Ir a Números
               </button>
             </div>

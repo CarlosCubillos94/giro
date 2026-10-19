@@ -84,15 +84,15 @@ export function Method({ setup, health }: { setup: Setup; health: Health | null 
         <h2>Qué mide el finder</h2>
         <p>
           La distancia no sale de un formulario. Sale de rondas cortas que alternan tres actividades,
-          con la mira en el centro. Giro cambia la sensibilidad entre rondas —a veces dos o tres veces
-          más rápida, a veces mucho más lenta— sin anunciarlo, y se queda con la distancia donde no hay
-          un sesgo constante a pasarte o a quedarte corto.
+          con la mira en el centro. Giro parte de tu cm/360 y lo mueve según el sesgo a pasarte o a
+          quedarte corto, con pasos que se achican. No promedia hacia el centro de la banda. Si el
+          sesgo no se repite, se queda cerca de tu partida.
         </p>
         <ul>
           <li>Seguimiento. Una esfera se mueve con una trayectoria suave e impredecible. Hay que mantener la mira encima, sin clic. Roja, y azul mientras estás encima.</li>
           <li>Flicks rápidos. Esferas grandes en puntos al azar. Clic y aparece la siguiente.</li>
           <li>Flicks precisos. Lo mismo, con una esfera del tamaño de una cabeza.</li>
-          <li>Si el flick se pasa del centro, la sensibilidad está alta (hay que subir los cm). Si se queda corto, está baja. Los ajustes se achican al acercarse al valor.</li>
+          <li>Si el flick se pasa del centro, la sensibilidad está alta (hay que subir los cm). Si se queda corto, está baja. Cuenta la magnitud del error, las microcorrecciones y el tiempo encima del blanco. Los pasos se achican; hace falta el mismo sesgo más de una ronda para converger.</li>
         </ul>
         <p>
           El rango de partida es la banda del juego. Si juegas a larga distancia o con armas de clic,

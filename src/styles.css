@@ -1124,6 +1124,20 @@ tbody tr[data-active="true"] { background: var(--amber-dim); }
 
 .range-card .figure { color: #f4fbff; }
 
+.range-card .why {
+  margin-top: 10px;
+  color: #c5e8f4;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.range-card .sens-dpi {
+  margin-top: 8px;
+  color: #e7f6ff;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
 .range-card .btn { border-color: rgba(232, 244, 255, 0.28); }
 
 .range-card .btn.primary {
@@ -1205,6 +1219,8 @@ tbody tr[data-active="true"] { background: var(--amber-dim); }
 
 .range-card .actions .btn.primary {
   grid-column: 1 / -1;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 @media (max-width: 720px) {

@@ -92,13 +92,22 @@ export function SelectField({
   );
 }
 
-export function CopyButton({ text }: { text: string }) {
+export function CopyButton({
+  text,
+  className,
+  children,
+}: {
+  text: string;
+  className?: string;
+  children?: ReactNode;
+}) {
   const [copied, setCopied] = useState(false);
+  const labeled = children != null;
 
   return (
     <button
       type="button"
-      className="icon-btn"
+      className={className ?? "icon-btn"}
       aria-label={copied ? "Copiado" : "Copiar sensibilidad"}
       onClick={(event) => {
         event.stopPropagation();
@@ -108,7 +117,13 @@ export function CopyButton({ text }: { text: string }) {
         });
       }}
     >
-      {copied ? <Check size={15} weight="light" /> : <Copy size={15} weight="light" />}
+      {labeled ? (
+        copied ? "Copiado" : children
+      ) : copied ? (
+        <Check size={15} weight="light" />
+      ) : (
+        <Copy size={15} weight="light" />
+      )}
     </button>
   );
 }

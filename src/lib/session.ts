@@ -8,6 +8,8 @@ export const ROUND_MS = 18_000;
 export const COUNTDOWN_S = 4;
 export const SEARCH_FLOOR = 12;
 export const SEARCH_CEIL = 90;
+/** |bias| below this is noise: do not move cm/360. */
+export const BIAS_FLOOR = 0.2;
 
 export type RoundSample = {
   task: ProbeTask;
@@ -21,18 +23,40 @@ export type RoundSample = {
   trackCrosses: number;
   trackLag: number;
   durationMs: number;
+  /** Signed peak error in degrees: + overshoot, − undershoot. */
+  meanErrorDeg: number;
+  meanAbsErrorDeg: number;
+  /** Direction reversals per flick (path wobble / micro-corrections). */
+  correctionsPerShot: number;
 };
 
 export type ProbeScore = {
   cm: number;
   score: number;
   bias: number;
+  task: ProbeTask;
+  shots: number;
+  overRate: number;
+  underRate: number;
+  trackOn: number;
+  trackCrosses: number;
+};
+
+export type Recommendation = {
+  cm: number;
+  why: string;
 };
 
 export type FinderTiming = {
   rounds: number;
   roundMs: number;
   countdownS: number;
+};
+
+type SearchState = {
+  cm: number;
+  step: number;
+  lastSign: -1 | 0 | 1;
 };
 
 export function finderQuery(search = ""): string | null {
@@ -91,8 +115,67 @@ export function taskHint(task: ProbeTask): string {
 }
 
 /**
- * Early rounds jump 2–3× faster or much slower. Later rounds shrink toward the
- * best score so far, biased by over/under-flick.
+ * Precision-first score. Hits-on-a-large-target and raw speed are secondary:
+ * overshoot magnitude, direction bias, and path wobble dominate.
+ * bias &gt; 0 → too fast (overflick); bias &lt; 0 → too slow (underflick).
+ */
+export function scoreSample(sample: RoundSample): ProbeScore {
+  if (sample.task === "track") {
+    const on = clamp01(sample.trackOn);
+    const smooth = 1 / (1 + sample.trackCrosses);
+    const lagPenalty = 1 / (1 + Math.max(0, sample.trackLag));
+    const score = on * 0.62 + smooth * 0.28 + lagPenalty * 0.1;
+    const tooFast = clamp01((sample.trackCrosses - 0.7) / 2) + (on < 0.45 && sample.trackCrosses >= 1.4 ? 0.2 : 0);
+    const tooSlow =
+      clamp01((sample.trackLag - 0.45) / 2.2) + (on < 0.5 && sample.trackCrosses < 0.85 ? 0.22 : 0);
+    return {
+      cm: sample.cm,
+      score: clamp01(score),
+      bias: clamp(tooFast - tooSlow, -1, 1),
+      task: sample.task,
+      shots: 0,
+      overRate: 0,
+      underRate: 0,
+      trackOn: on,
+      trackCrosses: sample.trackCrosses,
+    };
+  }
+
+  const shots = sample.hits + sample.misses;
+  const accuracy = shots === 0 ? 0 : sample.hits / shots;
+  const overRate = shots === 0 ? 0 : sample.over / shots;
+  const underRate = shots === 0 ? 0 : sample.under / shots;
+  const meanAbs =
+    Number.isFinite(sample.meanAbsErrorDeg) && sample.meanAbsErrorDeg > 0
+      ? sample.meanAbsErrorDeg
+      : overRate * 2.2 + underRate * 1.8;
+  const meanSigned = Number.isFinite(sample.meanErrorDeg)
+    ? sample.meanErrorDeg
+    : (overRate - underRate) * 2.2;
+  const corrections = Number.isFinite(sample.correctionsPerShot) ? Math.max(0, sample.correctionsPerShot) : 0;
+  const precision = 1 / (1 + meanAbs);
+  const smooth = 1 / (1 + corrections);
+  const speed = 1 / (1 + (sample.medianMs ?? 520) / 720);
+  const score = precision * 0.5 + accuracy * 0.22 + smooth * 0.2 + speed * 0.08;
+  const rateBias = overRate - underRate;
+  const magBias = clamp(meanSigned / 3, -1, 1);
+  return {
+    cm: sample.cm,
+    score: clamp01(score),
+    bias: clamp(0.6 * rateBias + 0.4 * magBias, -1, 1),
+    task: sample.task,
+    shots,
+    overRate,
+    underRate,
+    trackOn: 0,
+    trackCrosses: 0,
+  };
+}
+
+/**
+ * Walk cm/360 from the player's start using signed error, not a score average.
+ * Overflick (bias +) raises cm; underflick lowers it. Weak bias does not
+ * regress toward the band midpoint or the start beyond staying put.
  */
 export function nextProbeCm(opts: {
   roundIndex: number;
@@ -101,63 +184,68 @@ export function nextProbeCm(opts: {
   window: readonly [number, number];
   samples: readonly ProbeScore[];
 }): number {
-  const { roundIndex, totalRounds, currentCm, window, samples } = opts;
-  const lo = window[0];
-  const hi = window[1];
-  const start = Number.isFinite(currentCm) && currentCm > 0 ? currentCm : (lo + hi) / 2;
-
-  if (roundIndex === 0) return start;
-
-  const early = [start * 0.42, start * 2.3, start * 0.68, start * 1.55];
-  if (roundIndex <= early.length) {
-    return uniqueCm(clamp(early[roundIndex - 1] ?? start, lo, hi), samples, lo, hi);
-  }
-
-  const best = bestScore(samples) ?? { cm: start, score: 0, bias: 0 };
-  const remaining = Math.max(0.12, 1 - roundIndex / Math.max(totalRounds, 1));
-  const span = (hi - lo) * remaining * 0.28;
-  let next = best.cm;
-  if (best.bias > 0.12) next = best.cm * (1 + 0.18 * remaining);
-  else if (best.bias < -0.12) next = best.cm * (1 - 0.18 * remaining);
-  else next = best.cm + (roundIndex % 2 === 0 ? 1 : -1) * span * 0.35;
-
-  return uniqueCm(clamp(next, lo, hi), samples, lo, hi);
+  const start = Number.isFinite(opts.currentCm) && opts.currentCm > 0 ? opts.currentCm : (opts.window[0] + opts.window[1]) / 2;
+  if (opts.roundIndex === 0) return start;
+  const state = replaySearch(start, opts.samples);
+  return round2(state.cm);
 }
 
-export function scoreSample(sample: RoundSample): ProbeScore {
-  if (sample.task === "track") {
-    const on = clamp01(sample.trackOn);
-    let bias = 0;
-    if (sample.trackCrosses >= 1.6) bias += 0.35;
-    if (sample.trackLag > 1.2 && sample.trackCrosses < 0.9) bias -= 0.4;
-    if (on < 0.45 && sample.trackCrosses >= 1.7) bias += 0.2;
-    const score = on * 0.85 + (1 - Math.min(1, Math.abs(bias))) * 0.15;
-    return { cm: sample.cm, score: clamp01(score), bias: clamp(bias, -1, 1) };
+export function recommendCm(
+  samples: readonly ProbeScore[],
+  window: readonly [number, number],
+  startCm?: number,
+): Recommendation {
+  const start =
+    Number.isFinite(startCm) && (startCm ?? 0) > 0
+      ? (startCm as number)
+      : samples[0]?.cm ?? (window[0] + window[1]) / 2;
+  if (samples.length === 0) {
+    return {
+      cm: round2(start),
+      why: "No hubo rondas con evidencia. Dejamos tu distancia de partida.",
+    };
   }
-
-  const shots = sample.hits + sample.misses;
-  const hitRate = shots === 0 ? 0 : sample.hits / shots;
-  const time = sample.medianMs ?? 650;
-  const timeScore = 1 / (1 + time / 420);
-  const over = shots === 0 ? 0 : sample.over / shots;
-  const under = shots === 0 ? 0 : sample.under / shots;
-  let bias = over - under;
-  if (over >= 0.34 && over > under + 0.12) bias = Math.max(bias, 0.4);
-  if (under >= 0.34 && under > over + 0.12) bias = Math.min(bias, -0.4);
-  const score = hitRate * 0.72 + timeScore * 0.18 + (1 - Math.min(1, Math.abs(bias))) * 0.1;
-  return { cm: sample.cm, score: clamp01(score), bias: clamp(bias, -1, 1) };
+  const strong = samples.filter((item) => Math.abs(item.bias) >= BIAS_FLOOR).length;
+  const state = replaySearch(start, samples);
+  if (strong < 2) {
+    const best = samples.reduce((lead, item) => (item.score > lead.score ? item : lead));
+    const cm = best.score >= 0.55 ? round2(best.cm) : round2(start);
+    return { cm, why: explainRecommendation(samples, start, cm) };
+  }
+  return { cm: round2(state.cm), why: explainRecommendation(samples, start, state.cm) };
 }
 
-export function recommendCm(samples: readonly ProbeScore[], window: readonly [number, number]): number {
-  if (samples.length === 0) return round2((window[0] + window[1]) / 2);
-  const ranked = [...samples].sort((a, b) => b.score - a.score);
-  const top = ranked.slice(0, Math.min(4, ranked.length));
-  const weights = top.map((item) => Math.max(0.05, item.score) ** 2);
-  const wsum = weights.reduce((sum, weight) => sum + weight, 0);
-  let cm = top.reduce((sum, item, index) => sum + item.cm * (weights[index] ?? 0), 0) / wsum;
-  const meanBias = top.reduce((sum, item, index) => sum + item.bias * (weights[index] ?? 0), 0) / wsum;
-  cm *= 1 + meanBias * 0.08;
-  return round2(clamp(cm, window[0], window[1]));
+export function explainRecommendation(samples: readonly ProbeScore[], startCm: number, recCm: number): string {
+  const flicks = samples.filter((item) => item.task !== "track");
+  const tracks = samples.filter((item) => item.task === "track");
+  const shotTotal = flicks.reduce((sum, item) => sum + item.shots, 0);
+  const overTotal = flicks.reduce((sum, item) => sum + item.overRate * item.shots, 0);
+  const underTotal = flicks.reduce((sum, item) => sum + item.underRate * item.shots, 0);
+  const overPct = shotTotal > 0 ? Math.round((overTotal / shotTotal) * 100) : 0;
+  const underPct = shotTotal > 0 ? Math.round((underTotal / shotTotal) * 100) : 0;
+  const meanOn = tracks.length === 0 ? 0 : tracks.reduce((sum, item) => sum + item.trackOn, 0) / tracks.length;
+  const meanCross =
+    tracks.length === 0 ? 0 : tracks.reduce((sum, item) => sum + item.trackCrosses, 0) / tracks.length;
+
+  const parts: string[] = [];
+  if (shotTotal > 0 && overPct >= 20 && overPct >= underPct) {
+    parts.push(`Te pasaste en el ${overPct}% de los flicks.`);
+  } else if (shotTotal > 0 && underPct >= 20 && underPct > overPct) {
+    parts.push(`Te quedaste corto en el ${underPct}% de los flicks.`);
+  }
+  if (tracks.length > 0 && meanOn < 0.55) {
+    if (meanCross >= 1.2) parts.push("En el tracking la mira cruzaba el blanco (sensibilidad alta).");
+    else parts.push("En el tracking la mira se quedaba atrás (sensibilidad baja).");
+  }
+  const delta = recCm - startCm;
+  if (Math.abs(delta) < 1.2) {
+    parts.push("El sesgo no fue constante, así que nos quedamos cerca de tu partida.");
+  } else if (delta > 0) {
+    parts.push("Por eso sube el cm/360: más centímetros, más lenta.");
+  } else {
+    parts.push("Por eso baja el cm/360: menos centímetros, más rápida.");
+  }
+  return parts.join(" ");
 }
 
 export function progressPct(completedRounds: number, total: number): number {
@@ -170,20 +258,54 @@ export function rateOf(shots: readonly { kind: ShotKind }[], kind: ShotKind): nu
   return shots.filter((shot) => shot.kind === kind).length / shots.length;
 }
 
-function bestScore(samples: readonly ProbeScore[]): ProbeScore | null {
-  if (samples.length === 0) return null;
-  return samples.reduce((best, item) => (item.score > best.score ? item : best));
+export function emptyRound(task: ProbeTask, cm: number): RoundSample {
+  return {
+    task,
+    cm,
+    hits: 0,
+    misses: 0,
+    over: 0,
+    under: 0,
+    medianMs: null,
+    trackOn: 0,
+    trackCrosses: 0,
+    trackLag: 0,
+    durationMs: 0,
+    meanErrorDeg: 0,
+    meanAbsErrorDeg: 0,
+    correctionsPerShot: 0,
+  };
 }
 
-function uniqueCm(cm: number, samples: readonly ProbeScore[], lo: number, hi: number): number {
-  if (samples.length === 0) return round2(cm);
-  let value = round2(cm);
-  for (let step = 0; step < 8; step += 1) {
-    if (samples.every((item) => Math.abs(item.cm - value) >= 1.2)) return clamp(value, lo, hi);
-    const nudge = (step % 2 === 0 ? 1 : -1) * (1.6 + step);
-    value = round2(clamp(cm + nudge, lo, hi));
+function replaySearch(startCm: number, samples: readonly ProbeScore[]): SearchState {
+  let state: SearchState = {
+    cm: startCm,
+    step: Math.max(2.2, Math.abs(startCm) * 0.15),
+    lastSign: 0,
+  };
+  for (const sample of samples) {
+    state = stepSearch(state, sample);
   }
-  return round2(clamp(value, lo, hi));
+  return state;
+}
+
+function stepSearch(state: SearchState, sample: ProbeScore): SearchState {
+  const sign: -1 | 0 | 1 = sample.bias > BIAS_FLOOR ? 1 : sample.bias < -BIAS_FLOOR ? -1 : 0;
+  if (sign === 0) {
+    return { cm: state.cm, step: Math.max(0.5, state.step * 0.7), lastSign: 0 };
+  }
+  let step = state.step;
+  if (state.lastSign !== 0 && sign !== state.lastSign) {
+    step = Math.max(0.55, step * 0.42);
+  } else {
+    step = Math.max(0.55, step * 0.9);
+  }
+  const scale = 0.5 + 0.5 * Math.min(1, Math.abs(sample.bias));
+  return {
+    cm: clamp(state.cm + sign * step * scale, SEARCH_FLOOR, SEARCH_CEIL),
+    step,
+    lastSign: sign,
+  };
 }
 
 function round1(value: number): number {
