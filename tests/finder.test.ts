@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { canRunRound } from "../src/lib/fullscreen.ts";
 import { cmPer360, sensFromCm } from "../src/lib/sensitivity.ts";
 import {
   BIAS_FLOOR,
@@ -305,6 +306,10 @@ const full = finderTiming("");
 assert.equal(full.rounds, 15);
 assert.equal(finderQuery("giro=results"), "results");
 assert.equal(finderQuery("?giro=applied"), "applied");
+
+assert.equal(canRunRound(true, true), true);
+assert.equal(canRunRound(false, true), false);
+assert.equal(canRunRound(true, false), false);
 
 const recommended = 36.85;
 const valorantSens = sensFromCm(recommended, 800, 0.07);

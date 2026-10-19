@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { classifyShot, median, type Shot } from "../lib/finder.ts";
+import {
+  canRunRound,
+  exitFullscreen,
+  isFullscreen,
+  onFullscreenChange,
+  requestFullscreen,
+} from "../lib/fullscreen.ts";
 import { fovNote } from "../lib/fov.ts";
 import { formatPct01, formatSens } from "../lib/format.ts";
 import { GAMES } from "../lib/games.ts";
@@ -56,6 +63,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const [task, setTask] = useState<ProbeTask>("track");
   const [timing, setTiming] = useState<FinderTiming>(() => finderTiming());
 
+  const rangeRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RangeEngine | null>(null);
   const audioRef = useRef<RangeAudio | null>(null);
@@ -119,7 +127,9 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     audioRef.current = audio;
     if (engine.failed) setFailed(true);
     return () => {
+      endingRef.current = true;
       if (document.pointerLockElement === canvas) document.exitPointerLock();
+      void exitFullscreen();
       engine.dispose();
       audio.dispose();
       engineRef.current = null;
@@ -128,29 +138,35 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   }, []);
 
   useEffect(() => {
-    const onChangeLock = () => {
+    const onGuards = () => {
       const canvas = canvasRef.current;
-      const locked = document.pointerLockElement === canvas;
-      if (locked) {
-        phaseRef.current = "live";
-        setPhase("live");
+      const ready = canRunRound(isFullscreen(), document.pointerLockElement === canvas);
+      if (ready) {
+        if (phaseRef.current === "countdown" || phaseRef.current === "paused") {
+          phaseRef.current = "live";
+          setPhase("live");
+        }
         return;
       }
-      if (phaseRef.current === "live" && !endingRef.current) {
-        audioRef.current?.setTracking(false);
-        phaseRef.current = "paused";
-        setPhase("paused");
-        setNote("Soltaste el mouse. Esta ronda no cuenta.");
-      }
-      endingRef.current = false;
+      if (endingRef.current) return;
+      if (phaseRef.current !== "live") return;
+      audioRef.current?.setTracking(false);
+      if (document.pointerLockElement) document.exitPointerLock();
+      phaseRef.current = "paused";
+      setPhase("paused");
     };
-    document.addEventListener("pointerlockchange", onChangeLock);
-    return () => document.removeEventListener("pointerlockchange", onChangeLock);
+    document.addEventListener("pointerlockchange", onGuards);
+    const offFs = onFullscreenChange(onGuards);
+    return () => {
+      document.removeEventListener("pointerlockchange", onGuards);
+      offFs();
+    };
   }, []);
 
-  const lock = useCallback(() => {
+  const enterPlay = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || setup.dpi <= 0 || failed) return;
+    const root = rangeRef.current;
+    if (!canvas || !root || setup.dpi <= 0 || failed) return;
     setNote("");
     endingRef.current = false;
     const requestLock = canvas.requestPointerLock.bind(canvas) as (options?: {
@@ -158,25 +174,45 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     }) => void | Promise<void>;
     const attempt = lockAttempt.current + 1;
     lockAttempt.current = attempt;
-    const fail = () => {
+    const fail = (msg: string) => {
       if (lockAttempt.current !== attempt) return;
-      if (document.pointerLockElement === canvas || phaseRef.current === "live") return;
-      setNote("El navegador no capturó el mouse. Vuelve a pulsar el botón. Hace falta un mouse, no un trackpad.");
+      if (canRunRound(isFullscreen(), document.pointerLockElement === canvas)) return;
+      setNote(msg);
     };
-    void Promise.resolve()
-      .then(() => requestLock({ unadjustedMovement: true }))
-      .then(() => {
-        engineRef.current?.setRawMovement(true);
-      })
-      .catch(() =>
-        Promise.resolve(requestLock()).then(() => {
-          engineRef.current?.setRawMovement(false);
-        }),
-      )
-      .then(() => {
-        window.setTimeout(fail, 400);
-      })
-      .catch(fail);
+    const lockPointer = () =>
+      Promise.resolve()
+        .then(() => requestLock({ unadjustedMovement: true }))
+        .then(() => {
+          engineRef.current?.setRawMovement(true);
+        })
+        .catch(() =>
+          Promise.resolve(requestLock()).then(() => {
+            engineRef.current?.setRawMovement(false);
+          }),
+        );
+    void (async () => {
+      if (!isFullscreen()) {
+        await requestFullscreen(root);
+      }
+      if (!isFullscreen()) {
+        fail("Hace falta pantalla completa para las rondas. Vuelve a pulsar el botón.");
+        return;
+      }
+      await lockPointer();
+      window.setTimeout(() => {
+        if (canRunRound(isFullscreen(), document.pointerLockElement === canvas)) {
+          phaseRef.current = "live";
+          setPhase("live");
+          return;
+        }
+        if (document.pointerLockElement === canvas && !isFullscreen()) {
+          document.exitPointerLock();
+          fail("Hace falta pantalla completa para las rondas. Vuelve a pulsar el botón.");
+          return;
+        }
+        fail("El navegador no capturó el mouse. Vuelve a pulsar el botón. Hace falta un mouse, no un trackpad.");
+      }, 400);
+    })().catch(() => fail("El navegador no pasó a pantalla completa. Vuelve a pulsar el botón."));
   }, [failed, setup.dpi]);
 
   useEffect(() => {
@@ -187,13 +223,10 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     const id = window.setInterval(() => {
       left -= 1;
       setRemain(left);
-      if (left <= 0) {
-        window.clearInterval(id);
-        lock();
-      }
+      if (left <= 0) window.clearInterval(id);
     }, 1000);
     return () => window.clearInterval(id);
-  }, [lock, phase, roundIndex]);
+  }, [phase, roundIndex]);
 
   useEffect(() => {
     const current = engineRef.current;
@@ -206,6 +239,13 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       engine.resetView();
       audioRef.current?.setTracking(false);
       writeHud(ptsRef, timeRef, accRef, 0, clockMs(0), 0);
+      return;
+    }
+    if (!canRunRound(isFullscreen(), document.pointerLockElement === canvasRef.current)) {
+      engine.onShoot = null;
+      engine.onFrame = null;
+      engine.showIdle();
+      audioRef.current?.setTracking(false);
       return;
     }
 
@@ -333,6 +373,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     }
 
     function finishRound() {
+      if (phaseRef.current !== "live") return;
       endingRef.current = true;
       accepting = false;
       tracking = false;
@@ -364,6 +405,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
         setWhy(rec.why);
         phaseRef.current = "results";
         setPhase("results");
+        void exitFullscreen();
         return;
       }
       roundRef.current = nextIndex;
@@ -471,6 +513,9 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   }
 
   function retry() {
+    endingRef.current = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    void exitFullscreen();
     setPhase("intro");
     setNote("");
     setResult(null);
@@ -479,7 +524,9 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   }
 
   function leave(view: LeaveView) {
+    endingRef.current = true;
     if (document.pointerLockElement) document.exitPointerLock();
+    void exitFullscreen();
     onLeave(view);
   }
 
@@ -494,7 +541,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const percent = progressPct(completed, timing.rounds);
 
   return (
-    <section className="range">
+    <section className="range" ref={rangeRef}>
       <canvas ref={canvasRef} />
       <div className="range-brand">
         <strong>GIRO</strong>
@@ -549,7 +596,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
             >
               EMPEZAR
             </button>
-            <p className="hint">Mouse, no trackpad. Escape suelta el mouse.</p>
+            <p className="hint">Mouse, no trackpad. Las rondas van a pantalla completa. Escape suelta el mouse.</p>
           </div>
         </div>
       ) : null}
@@ -644,9 +691,10 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
             <p className="figure countdown">{remain}</p>
             <h1>{taskLabel(task)}</h1>
             <p>{taskHint(task)}</p>
-            <button type="button" className="btn primary" onClick={lock}>
-              Saltar cuenta regresiva
+            <button type="button" className="btn primary" onClick={enterPlay}>
+              {remain > 0 ? "Empezar en pantalla completa" : "Empezar ronda"}
             </button>
+            <p className="hint">Hace falta pantalla completa. El mouse queda capturado.</p>
             {note ? <p className="hint warn-text">{note}</p> : null}
           </div>
         </div>
@@ -658,11 +706,12 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
             <p className="eyebrow">
               Ronda {roundIndex + 1} / {timing.rounds}
             </p>
-            <h1>Ronda interrumpida</h1>
-            <p>{note}</p>
-            <button type="button" className="btn primary" onClick={lock}>
-              Reanudar
+            <h1>Vuelve a pantalla completa para continuar</h1>
+            <p>Saliste de pantalla completa o soltaste el mouse. Esta ronda no cuenta. Se reinicia al continuar.</p>
+            <button type="button" className="btn primary" onClick={enterPlay}>
+              Volver a pantalla completa
             </button>
+            {note ? <p className="hint warn-text">{note}</p> : null}
           </div>
         </div>
       ) : null}
