@@ -12,20 +12,25 @@ import { formatPct01, formatSens } from "../lib/format.ts";
 import { GAMES } from "../lib/games.ts";
 import { cmPer360, sensFromCm } from "../lib/sensitivity.ts";
 import {
+  commitPending,
   finderQuery,
   finderTiming,
   nextProbeCm,
   progressPct,
+  recapFromRound,
   recommendCm,
   scoreSample,
   searchWindow,
   taskForRound,
   taskHint,
+  taskKind,
   taskLabel,
+  taskTitle,
   type FinderTiming,
   type Playstyle,
   type ProbeScore,
   type ProbeTask,
+  type RoundRecap,
   type RoundSample,
 } from "../lib/session.ts";
 import type { Setup } from "../setup.ts";
@@ -33,7 +38,16 @@ import { CopyButton, NumberField, SelectField } from "../ui.tsx";
 import { RangeAudio } from "./audio.ts";
 import { RangeEngine } from "./engine.ts";
 
-type Phase = "intro" | "profile" | "dpi" | "countdown" | "live" | "paused" | "results" | "applied";
+type Phase =
+  | "intro"
+  | "profile"
+  | "dpi"
+  | "ready"
+  | "live"
+  | "paused"
+  | "recap"
+  | "results"
+  | "applied";
 type LeaveView = "numeros" | "metodo";
 
 type RangeSessionProps = {
@@ -56,8 +70,8 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const [failed, setFailed] = useState(false);
   const [note, setNote] = useState("");
   const [roundIndex, setRoundIndex] = useState(0);
-  const [remain, setRemain] = useState(4);
   const [result, setResult] = useState<number | null>(null);
+  const [recap, setRecap] = useState<RoundRecap | null>(null);
   const [why, setWhy] = useState("");
   const [appliedSens, setAppliedSens] = useState<number | null>(null);
   const [task, setTask] = useState<ProbeTask>("track");
@@ -78,6 +92,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
   const cmRef = useRef(40);
   const roundRef = useRef(0);
   const samplesRef = useRef<ProbeScore[]>([]);
+  const pendingScoreRef = useRef<ProbeScore | null>(null);
   const windowRef = useRef<[number, number]>([35, 75]);
   const timingRef = useRef(timing);
   const currentCmRef = useRef(currentCm);
@@ -103,6 +118,35 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
 
   useEffect(() => {
     const mode = finderQuery(window.location.search);
+    if (mode === "paused") {
+      setTiming(finderTiming(""));
+      setPhase("paused");
+      return;
+    }
+    if (mode === "ready") {
+      setTiming(finderTiming(""));
+      setTask("track");
+      setPhase("ready");
+      return;
+    }
+    if (mode === "recap") {
+      setTiming(finderTiming(""));
+      setRoundIndex(1);
+      setTask("speed");
+      setRecap({
+        task: "speed",
+        points: 8,
+        hits: 8,
+        misses: 2,
+        accuracy: 0.8,
+        medianMs: 312,
+        overPct: 62,
+        underPct: 10,
+        trackOn: null,
+      });
+      setPhase("recap");
+      return;
+    }
     if (mode !== "results" && mode !== "applied") return;
     const cm = Math.round((currentCmRef.current ?? 36.85) * 100) / 100;
     setResult(cm);
@@ -142,7 +186,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       const canvas = canvasRef.current;
       const ready = canRunRound(isFullscreen(), document.pointerLockElement === canvas);
       if (ready) {
-        if (phaseRef.current === "countdown" || phaseRef.current === "paused") {
+        if (phaseRef.current === "ready" || phaseRef.current === "paused") {
           phaseRef.current = "live";
           setPhase("live");
         }
@@ -214,19 +258,6 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       }, 400);
     })().catch(() => fail("El navegador no pasó a pantalla completa. Vuelve a pulsar el botón."));
   }, [failed, setup.dpi]);
-
-  useEffect(() => {
-    if (phase !== "countdown") return;
-    const seconds = timingRef.current.countdownS;
-    let left = seconds;
-    setRemain(left);
-    const id = window.setInterval(() => {
-      left -= 1;
-      setRemain(left);
-      if (left <= 0) window.clearInterval(id);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [phase, roundIndex]);
 
   useEffect(() => {
     const current = engineRef.current;
@@ -395,32 +426,13 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
         correctionsPerShot: flickCount === 0 ? 0 : correctionSum / flickCount,
       };
       const scored = scoreSample(sample);
-      samplesRef.current = [...samplesRef.current, scored];
-      const nextIndex = roundRef.current + 1;
+      pendingScoreRef.current = scored;
+      setRecap(recapFromRound(sample, points));
       const canvas = canvasRef.current;
       if (canvas && document.pointerLockElement === canvas) document.exitPointerLock();
-      if (nextIndex >= timing.rounds) {
-        const rec = recommendCm(samplesRef.current, windowRef.current, startCmRef.current);
-        setResult(rec.cm);
-        setWhy(rec.why);
-        phaseRef.current = "results";
-        setPhase("results");
-        void exitFullscreen();
-        return;
-      }
-      roundRef.current = nextIndex;
-      setRoundIndex(nextIndex);
-      const nextTask = taskForRound(nextIndex);
-      setTask(nextTask);
-      cmRef.current = nextProbeCm({
-        roundIndex: nextIndex,
-        totalRounds: timing.rounds,
-        currentCm: startCmRef.current,
-        window: windowRef.current,
-        samples: samplesRef.current,
-      });
-      phaseRef.current = "countdown";
-      setPhase("countdown");
+      void exitFullscreen();
+      phaseRef.current = "recap";
+      setPhase("recap");
     }
 
     function onShot() {
@@ -507,15 +519,56 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       window: range,
       samples: [],
     });
+    pendingScoreRef.current = null;
+    setRecap(null);
     audioRef.current?.resume();
-    setRemain(timing.countdownS);
-    setPhase("countdown");
+    setPhase("ready");
+  }
+
+  function continueAfterRecap() {
+    samplesRef.current = commitPending(samplesRef.current, pendingScoreRef.current);
+    pendingScoreRef.current = null;
+    const nextIndex = roundRef.current + 1;
+    if (nextIndex >= timingRef.current.rounds) {
+      const rec = recommendCm(samplesRef.current, windowRef.current, startCmRef.current);
+      setResult(rec.cm);
+      setWhy(rec.why);
+      setRecap(null);
+      phaseRef.current = "results";
+      setPhase("results");
+      void exitFullscreen();
+      return;
+    }
+    roundRef.current = nextIndex;
+    setRoundIndex(nextIndex);
+    setTask(taskForRound(nextIndex));
+    cmRef.current = nextProbeCm({
+      roundIndex: nextIndex,
+      totalRounds: timingRef.current.rounds,
+      currentCm: startCmRef.current,
+      window: windowRef.current,
+      samples: samplesRef.current,
+    });
+    setRecap(null);
+    phaseRef.current = "ready";
+    setPhase("ready");
+    enterPlay();
+  }
+
+  function repeatTask() {
+    pendingScoreRef.current = null;
+    setRecap(null);
+    phaseRef.current = "ready";
+    setPhase("ready");
+    enterPlay();
   }
 
   function retry() {
     endingRef.current = true;
     if (document.pointerLockElement) document.exitPointerLock();
     void exitFullscreen();
+    pendingScoreRef.current = null;
+    setRecap(null);
     setPhase("intro");
     setNote("");
     setResult(null);
@@ -537,7 +590,14 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
     setPhase("applied");
   }
 
-  const completed = phase === "results" || phase === "applied" ? timing.rounds : roundIndex;
+  const completed =
+    phase === "results" || phase === "applied"
+      ? timing.rounds
+      : phase === "recap"
+        ? roundIndex + 1
+        : roundIndex;
+  const nextTask = taskForRound(phase === "recap" ? roundIndex + 1 : roundIndex);
+  const lastRound = roundIndex + 1 >= timing.rounds;
   const percent = progressPct(completed, timing.rounds);
 
   return (
@@ -567,7 +627,7 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
       </div>
       {phase === "live" ? <div className="aim-dot" /> : null}
 
-      {failed && phase !== "results" && phase !== "applied" ? (
+      {failed && phase !== "results" && phase !== "applied" && phase !== "ready" && phase !== "recap" && phase !== "paused" ? (
         <div className="range-veil">
           <div className="range-card">
             <h1>Este navegador no abrió el rango 3D.</h1>
@@ -682,19 +742,97 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
         </div>
       ) : null}
 
-      {phase === "countdown" ? (
+      {phase === "ready" ? (
         <div className="range-veil">
-          <div className="range-card">
+          <div className="range-card range-card-mid">
             <p className="eyebrow">
               Ronda {roundIndex + 1} / {timing.rounds} · {percent}% completado
             </p>
-            <p className="figure countdown">{remain}</p>
             <h1>{taskLabel(task)}</h1>
+            <p className="next-kind">{taskKind(task)}</p>
             <p>{taskHint(task)}</p>
-            <button type="button" className="btn primary" onClick={enterPlay}>
-              {remain > 0 ? "Empezar en pantalla completa" : "Empezar ronda"}
-            </button>
-            <p className="hint">Hace falta pantalla completa. El mouse queda capturado.</p>
+            <div className="actions">
+              <button type="button" className="btn primary" onClick={enterPlay}>
+                Continuar: {taskTitle(task)}
+              </button>
+              <button type="button" className="btn" onClick={() => leave("numeros")}>
+                Salir
+              </button>
+            </div>
+            <p className="hint">Hace falta pantalla completa. El mouse queda capturado. La sensibilidad de la ronda no se muestra.</p>
+            {note ? <p className="hint warn-text">{note}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "recap" && recap != null ? (
+        <div className="range-veil">
+          <div className="range-card range-card-mid">
+            <p className="eyebrow">
+              Ronda {roundIndex + 1} / {timing.rounds} · {percent}% completado
+            </p>
+            <h1>Ronda terminada</h1>
+            <p>
+              {taskTitle(recap.task)} · {taskKind(recap.task)}
+            </p>
+            <dl className="range-stats">
+              <div>
+                <dt>Puntos</dt>
+                <dd>{recap.points}</dd>
+              </div>
+              {recap.task === "track" ? (
+                <div>
+                  <dt>Tiempo en blanco</dt>
+                  <dd>{formatPct01(recap.trackOn ?? recap.accuracy)}</dd>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <dt>Precisión</dt>
+                    <dd>{formatPct01(recap.accuracy)}</dd>
+                  </div>
+                  <div>
+                    <dt>Aciertos / fallos</dt>
+                    <dd>
+                      {recap.hits} / {recap.misses}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Reacción</dt>
+                    <dd>{recap.medianMs == null ? "—" : `${Math.round(recap.medianMs)} ms`}</dd>
+                  </div>
+                  <div>
+                    <dt>Te pasaste</dt>
+                    <dd>{recap.overPct}%</dd>
+                  </div>
+                  <div>
+                    <dt>Te quedaste corto</dt>
+                    <dd>{recap.underPct}%</dd>
+                  </div>
+                </>
+              )}
+            </dl>
+            {lastRound ? (
+              <p className="next-kind">Siguiente: ver el cm/360 recomendado.</p>
+            ) : (
+              <>
+                <p className="next-kind">
+                  Siguiente: {taskTitle(nextTask)} · {taskKind(nextTask)}
+                </p>
+                <p>{taskHint(nextTask)}</p>
+              </>
+            )}
+            <div className="actions">
+              <button type="button" className="btn primary" onClick={continueAfterRecap}>
+                {lastRound ? "Continuar: Ver resultado" : `Continuar: ${taskTitle(nextTask)}`}
+              </button>
+              <button type="button" className="btn" onClick={repeatTask}>
+                Repetir tarea
+              </button>
+              <button type="button" className="btn" onClick={() => leave("numeros")}>
+                Salir
+              </button>
+            </div>
             {note ? <p className="hint warn-text">{note}</p> : null}
           </div>
         </div>
@@ -702,15 +840,23 @@ export function RangeSession({ setup, currentCm, onChange, onApply, onLeave }: R
 
       {phase === "paused" ? (
         <div className="range-veil">
-          <div className="range-card">
+          <div className="range-card range-card-mid">
             <p className="eyebrow">
               Ronda {roundIndex + 1} / {timing.rounds}
             </p>
             <h1>Vuelve a pantalla completa para continuar</h1>
-            <p>Saliste de pantalla completa o soltaste el mouse. Esta ronda no cuenta. Se reinicia al continuar.</p>
-            <button type="button" className="btn primary" onClick={enterPlay}>
-              Volver a pantalla completa
-            </button>
+            <p>Saliste de pantalla completa o soltaste el mouse. Esta ronda no cuenta.</p>
+            <div className="actions">
+              <button type="button" className="btn primary" onClick={enterPlay}>
+                Continuar
+              </button>
+              <button type="button" className="btn" onClick={enterPlay}>
+                Reintentar
+              </button>
+              <button type="button" className="btn" onClick={() => leave("numeros")}>
+                Salir
+              </button>
+            </div>
             {note ? <p className="hint warn-text">{note}</p> : null}
           </div>
         </div>

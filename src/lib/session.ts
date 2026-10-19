@@ -114,6 +114,53 @@ export function taskHint(task: ProbeTask): string {
   return "Haz clic en la esfera chica, del tamaño de una cabeza.";
 }
 
+export function taskTitle(task: ProbeTask): string {
+  if (task === "track") return "Seguimiento";
+  if (task === "speed") return "Flicks rápidos";
+  return "Flicks precisos";
+}
+
+export function taskKind(task: ProbeTask): string {
+  if (task === "track") return "Seguimiento";
+  return "Flick";
+}
+
+/** Recap shown between tasks. Never includes probe cm/360 or in-game sens. */
+export type RoundRecap = {
+  task: ProbeTask;
+  points: number;
+  hits: number;
+  misses: number;
+  accuracy: number;
+  medianMs: number | null;
+  overPct: number;
+  underPct: number;
+  trackOn: number | null;
+};
+
+export function recapFromRound(sample: RoundSample, points: number): RoundRecap {
+  const shots = sample.hits + sample.misses;
+  return {
+    task: sample.task,
+    points,
+    hits: sample.hits,
+    misses: sample.misses,
+    accuracy: sample.task === "track" ? clamp01(sample.trackOn) : shots === 0 ? 0 : sample.hits / shots,
+    medianMs: sample.medianMs,
+    overPct: shots === 0 ? 0 : Math.round((sample.over / shots) * 100),
+    underPct: shots === 0 ? 0 : Math.round((sample.under / shots) * 100),
+    trackOn: sample.task === "track" ? clamp01(sample.trackOn) : null,
+  };
+}
+
+export function commitPending(
+  samples: readonly ProbeScore[],
+  pending: ProbeScore | null,
+): ProbeScore[] {
+  if (pending == null) return [...samples];
+  return [...samples, pending];
+}
+
 /**
  * Precision-first score. Hits-on-a-large-target and raw speed are secondary:
  * overshoot magnitude, direction bias, and path wobble dominate.

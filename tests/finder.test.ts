@@ -3,6 +3,7 @@ import { canRunRound } from "../src/lib/fullscreen.ts";
 import { cmPer360, sensFromCm } from "../src/lib/sensitivity.ts";
 import {
   BIAS_FLOOR,
+  commitPending,
   emptyRound,
   explainRecommendation,
   finderQuery,
@@ -10,6 +11,7 @@ import {
   nextProbeCm,
   playstyleRange,
   progressPct,
+  recapFromRound,
   recommendCm,
   scoreSample,
   searchWindow,
@@ -306,6 +308,41 @@ const full = finderTiming("");
 assert.equal(full.rounds, 15);
 assert.equal(finderQuery("giro=results"), "results");
 assert.equal(finderQuery("?giro=applied"), "applied");
+assert.equal(finderQuery("giro=recap"), "recap");
+assert.equal(finderQuery("giro=paused"), "paused");
+
+const recapFlick = recapFromRound(
+  flickRound("speed", 28, { over: 8, under: 1, hits: 8, error: 2.2, abs: 2.2 }),
+  8,
+);
+assert.equal(recapFlick.points, 8);
+assert.equal(recapFlick.overPct, 80);
+assert.equal(recapFlick.hits, 8);
+assert.equal(recapFlick.misses, 2);
+assert.equal("cm" in recapFlick, false, "recap must not reveal probe sens");
+
+const pendingOver = scoreSample(
+  flickRound("speed", 40, { over: 8, under: 0, hits: 8, error: 2.6, abs: 2.6, corrections: 1.8, ms: 240 }),
+);
+const uncommitted = commitPending([], null);
+assert.equal(uncommitted.length, 0);
+const stillStart = nextProbeCm({
+  roundIndex: 0,
+  totalRounds: 15,
+  currentCm: 40,
+  window: valorantBand,
+  samples: uncommitted,
+});
+assert.equal(stillStart, 40, "repeat discards the round: search stays at the same probe");
+const committed = commitPending([], pendingOver);
+const afterCommit = nextProbeCm({
+  roundIndex: 1,
+  totalRounds: 15,
+  currentCm: 40,
+  window: valorantBand,
+  samples: committed,
+});
+assert.ok(afterCommit > 40, `continue commits the sample and walks cm (${afterCommit})`);
 
 assert.equal(canRunRound(true, true), true);
 assert.equal(canRunRound(false, true), false);
